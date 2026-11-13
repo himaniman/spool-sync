@@ -22,8 +22,16 @@ Every 5 minutes, through the Bambu cloud only (the printer can be anywhere):
 5. SQLite (`/data/spool-sync.db`) remembers handled jobs and sent alerts, so nothing is deducted twice.
    Prints that started before the first run are never touched.
 
-Not covered: prints started from the SD card / printer screen or in LAN-only mode — they never reach the
-cloud task list (`print_type: local`, `task_id: 0` on MQTT), so their weight is unknown here.
+Prints started from the SD card / printer screen never reach the cloud task list, and the printer does
+not report their weight anywhere (it is only inside the file on the printer). A second thread listens to
+the cloud MQTT broker (`us.mqtt.bambulab.com:8883`, user `u_{uid}`, password = the access token,
+`device/{serial}/report`; one `pushall` per connect because P1 printers send deltas) and, when a print
+with `print_type: local` / `task_id: 0` ends, only reminds to fix the spool by hand. Cloud prints report
+`print_type: cloud` with `task_id` = the `my/tasks` id and are left to the sync pass. LAN-only mode is
+not covered at all.
+
+The service also keeps every change of every spool it sees (`history`), with the cloud's own
+`updatedAt`, and marks its own writes `deduct` — to tell later who changed a spool.
 
 ### Messages
 
@@ -34,6 +42,7 @@ cloud task list (`print_type: local`, `task_id: 0` on MQTT), so their weight is 
 | below `LOW_GRAMS` | extra line 🔻 Осталось меньше 100 г. (once per spool until it is refilled) |
 | running, not enough | ⚠️ «title» требует 60 г, а на … осталось 48 г. Может не хватить. |
 | no / several spools marked in the printer, type mismatch | ❓ … — nothing deducted; retried every pass, reminded every `REMIND_HOURS` |
+| SD card print ended | 🗂 «name» с флешки закончилась — вес не знаю, ничего не списал. Поправь остаток … в Handy. |
 | login expires in `TOKEN_WARN_DAYS` | 🔑 Вход в Bambu истекает через N дн. |
 | HTTP 401 | 🔑 Bambu не пускает (401). |
 | cloud failing for `OUTAGE_ALERT_SEC` | 🛑 … and ✅ when it recovers |

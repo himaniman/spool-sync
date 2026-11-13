@@ -27,6 +27,7 @@ from . import bambu as bb
 from .notify import Telegram
 from .store import Store
 from .sync import Syncer, spool_label
+from .watch import Watcher
 
 log = logging.getLogger("spool-sync")
 
@@ -132,6 +133,8 @@ def check_token(store, tg):
 def cmd_run():
     logging.info("spool-sync started: every %ss, low %s g, printer %s", INTERVAL, LOW, PRINTER or "any")
     store, tg = Store(DATA / "spool-sync.db"), telegram()
+    if os.environ.get("WATCH_LOCAL_PRINTS", "1") != "0":
+        Watcher(TOKEN_FILE, tg, PRINTER).start()
     failing_since = None
     while True:
         try:

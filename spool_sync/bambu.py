@@ -49,6 +49,13 @@ class Bambu:
     def spools(self):
         return self._json("GET", FILAMENTS).get("hits", [])
 
+    def uid(self):
+        """Numeric user id, the cloud MQTT username is u_{uid} (no longer inside the token)."""
+        return self._json("GET", "/v1/design-user-service/my/preference")["uid"]
+
+    def device_serials(self):
+        return [d["dev_id"] for d in self._json("GET", "/v1/iot-service/api/user/bind").get("devices", [])]
+
     def put_spool(self, spool):
         """Store spool['netWeight'] and return the spool as the cloud has it afterwards.
 
