@@ -117,6 +117,44 @@ class SyncTest(unittest.TestCase):
         s.once()
         self.assertEqual(self.cloud.puts, [(10, 0)])
 
+    def test_zeroed_on_loading_is_restored_once(self):
+        spools = [spool(10, 600)]
+        s = self.make([], spools)
+        s.once()  # snapshot: 600 g, not in printer
+        spools[0].update(inPrinter=True, devId=DEV, slotId="255", netWeight=0, depleted=True, updatedAt=111)
+        s.once()
+        self.assertEqual(self.cloud.puts, [(10, 600)])
+        self.assertIn("вернул 600 г", self.tg.sent[0])
+        spools[0].update(netWeight=0, depleted=True, updatedAt=222)  # the user marks it empty again
+        s.once()
+        self.assertEqual(self.cloud.puts, [(10, 600)])  # not restored a second time
+
+    def test_nearly_empty_spool_marked_empty_is_left_alone(self):
+        spools = [spool(10, 40, True)]
+        s = self.make([], spools)
+        s.once()
+        spools[0].update(netWeight=0, depleted=True, updatedAt=111)
+        s.once()
+        self.assertEqual(self.cloud.puts, [])
+
+    def test_own_deduction_to_zero_is_not_restored(self):
+        spools = [spool(10, 150, True)]
+        s = self.make([], spools)
+        s.once()
+        self.cloud._tasks.append(task(1, 2, weight=200))
+        s.once()
+        s.once()
+        self.assertEqual(self.cloud.puts, [(10, 0)])
+
+    def test_history_records_changes(self):
+        spools = [spool(10, 600)]
+        s = self.make([], spools)
+        s.once()
+        s.once()  # unchanged: no new row
+        spools[0]["netWeight"] = 550
+        s.once()
+        self.assertEqual([r[2] for r in self.store.history(10)], [550, 600])
+
     def test_dry_run_writes_nothing(self):
         s = self.make([task(1, 2)], [spool(10, 685, True)])
         s.dry = True

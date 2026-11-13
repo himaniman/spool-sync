@@ -7,6 +7,7 @@
   spools                Filament Manager spools and which one is in the printer
   setw <id> <grams>     set a spool's remaining grams
   log [N]               last N journal entries (what was deducted)
+  history [id [N]]      every change of the spools seen by the service (what was set, when)
   test-message          send a test message to Telegram
 
 Config is environment variables (a local .env is read too), see .env.example.
@@ -111,6 +112,13 @@ def cmd_log(n):
         print(f"{at}  task {tid} st={status} {title!r}  spool {sid}: {before} -> {after} (-{grams} g) {note or ''}")
 
 
+def cmd_history(spool_id, n):
+    for seen, sid, net, inp, dep, upd, src in Store(DATA / "spool-sync.db").history(spool_id, n):
+        changed = datetime.fromtimestamp(upd, TZ).strftime("%m-%d %H:%M:%S") if upd else "?"
+        print(f"seen {seen}  spool {sid}: {net:>5} g  {'in printer' if inp else '':<10} "
+              f"{'depleted' if dep else '':<8}  changed in cloud {changed}  ({src})")
+
+
 def check_token(store, tg):
     tok = bb.load_token(TOKEN_FILE)
     if not tok:
@@ -170,6 +178,8 @@ def main():
         cmd_setw(a[1], a[2])
     elif cmd == "log":
         cmd_log(int(a[1]) if len(a) > 1 else 20)
+    elif cmd == "history":
+        cmd_history(a[1] if len(a) > 1 else None, int(a[2]) if len(a) > 2 else 30)
     elif cmd == "test-message":
         print("sent" if telegram().send("🧵 spool-sync: тестовое сообщение, связь есть.") else "FAILED")
     else:

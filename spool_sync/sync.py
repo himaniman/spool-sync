@@ -49,6 +49,8 @@ class Syncer:
         since = ts(since)
         tasks = self.bambu.tasks(20)
         spools = self.bambu.spools()
+        for s in spools:
+            self._guard(s)
         for t in sorted(tasks, key=lambda t: t.get("startTime") or ""):
             start = ts(t.get("startTime"))
             if not start or start < since or self.store.is_handled(t["id"]):
@@ -62,6 +64,35 @@ class Syncer:
         for s in spools:  # a refilled / new spool re-arms its low-weight alert
             if (s.get("netWeight") or 0) >= self.low and self.store.alert_exists(f"low:{s['id']}"):
                 self.store.alert_clear(f"low:{s['id']}")
+            if not self.dry:
+                self.store.save_snap(s)
+
+    # -- Bambu zeroes a loaded non-RFID spool (seen when one was put in the printer, and after a print) --
+
+    def _guard(self, s):
+        """Undo a 0 g + depleted that appeared on a loaded spool since the last pass (not written by us).
+
+        Bambu takes the printer's `remain: 0` (it never knows the rest of a non-RFID spool) as the truth.
+        A spool that really ran out is usually below LOW_GRAMS first; and a second zero within 24 h is
+        taken as meant, so marking a spool empty twice always wins.
+        """
+        prev = self.store.snap(s["id"])
+        if not prev or not s.get("inPrinter"):
+            return
+        zeroed = ((s.get("netWeight") or 0) == 0 and s.get("depleted")
+                  and int(s.get("updatedAt") or 0) != prev["updated_at"])
+        if not zeroed or prev["net"] < self.low:
+            return
+        key = f"restored:{s['id']}"
+        if not self.store.alert_due(key, 86400):
+            return
+        log.warning("spool %s zeroed by Bambu, restoring %s g", s["id"], prev["net"])
+        if not self.dry:
+            s.update(self.bambu.put_spool({**s, "netWeight": prev["net"]}))
+            self.store.save_snap(s, "restore")
+            self.store.alert_sent(key)
+        self.tg.send(f"🛟 Bambu обнулил {spool_label(s)} — вернул {prev['net']} г.\n"
+                     f"Если она правда закончилась — поставь 0 ещё раз, второй раз не трону.")
 
     # -- spool choice ----------------------------------------------------------------------------------
 
@@ -145,6 +176,7 @@ class Syncer:
         after = max(0, int(round(before - grams)))
         if not self.dry:
             s.update(self.bambu.put_spool({**s, "netWeight": after}))  # keeps the in-memory list current
+            self.store.save_snap(s, "deduct")
             self.store.add_handled(t["id"], status, title, s["id"], round(grams, 2), before, after)
         text = f"{head}\n{spool_label(s)}: {before} → {after} г"
         if after < self.low and self.store.alert_due(f"low:{s['id']}"):

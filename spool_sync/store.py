@@ -18,6 +18,14 @@ create table if not exists handled (
     note text
 );
 create table if not exists alerts (key text primary key, sent_at real not null);
+-- last seen state of every spool, and every change seen (answers "what did I set there?")
+create table if not exists spool_snap (
+    spool_id integer primary key, net integer, in_printer integer, depleted integer, updated_at integer
+);
+create table if not exists spool_hist (
+    seen_at text not null, spool_id integer, net integer, in_printer integer, depleted integer,
+    updated_at integer, source text      -- 'cloud' = seen changed, 'deduct' / 'restore' = written by us
+);
 """
 
 
@@ -65,3 +73,28 @@ class Store:
 
     def alert_exists(self, key):
         return self.db.execute("select 1 from alerts where key=?", (key,)).fetchone() is not None
+
+    # spool snapshots
+    def snap(self, spool_id):
+        row = self.db.execute("select net, in_printer, depleted, updated_at from spool_snap where spool_id=?",
+                              (spool_id,)).fetchone()
+        return dict(zip(("net", "in_printer", "depleted", "updated_at"), row)) if row else None
+
+    def save_snap(self, s, source="cloud"):
+        """Remember spool s; log it to spool_hist when it differs from the last snapshot."""
+        cur = (int(s.get("netWeight") or 0), int(bool(s.get("inPrinter"))), int(bool(s.get("depleted"))),
+               int(s.get("updatedAt") or 0))
+        prev = self.snap(s["id"])
+        if prev and (prev["net"], prev["in_printer"], prev["depleted"], prev["updated_at"]) == cur:
+            return
+        with self.db:
+            self.db.execute("insert or replace into spool_snap values (?,?,?,?,?)", (s["id"], *cur))
+            self.db.execute("insert into spool_hist values (?,?,?,?,?,?,?)", (
+                datetime.now(timezone.utc).isoformat(timespec="seconds"), s["id"], *cur, source))
+
+    def history(self, spool_id=None, n=30):
+        q = "select seen_at, spool_id, net, in_printer, depleted, updated_at, source from spool_hist"
+        args = ()
+        if spool_id:
+            q, args = q + " where spool_id=?", (spool_id,)
+        return self.db.execute(q + " order by rowid desc limit ?", (*args, n)).fetchall()
