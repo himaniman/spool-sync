@@ -1,0 +1,15 @@
+services:
+  spool-sync:
+    build: .
+    image: spool-sync:local
+    container_name: spool-sync
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - spool-data:/data
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+volumes:
+  spool-data:
