@@ -49,6 +49,8 @@ class Syncer:
         since = ts(since)
         tasks = self.bambu.tasks(20)
         spools = self.bambu.spools()
+        for s in spools:
+            self._guard(s)
         for t in sorted(tasks, key=lambda t: t.get("startTime") or ""):
             start = ts(t.get("startTime"))
             if not start or start < since or self.store.is_handled(t["id"]):
@@ -64,6 +66,32 @@ class Syncer:
                 self.store.alert_clear(f"low:{s['id']}")
             if not self.dry:
                 self.store.save_snap(s)  # spool_hist: every change seen, with the cloud's own updatedAt
+
+    # -- Bambu zeroes the loaded non-RFID spool a few minutes before a print -------------------------
+
+    def _guard(self, s):
+        """Undo a 0 g + depleted that appeared on a loaded spool since the last pass (not written by us).
+
+        Studio / Handy copy the printer's external slot `remain: 0` (it never knows the rest of a
+        non-RFID spool) into Filament Manager, seen minutes before each cloud print. A spool that really
+        ran out was below LOW_GRAMS by our count already, or gets taken out of the printer in Handy.
+        """
+        prev = self.store.snap(s["id"])
+        if not prev or not s.get("inPrinter") or prev["net"] < self.low:
+            return
+        if (s.get("netWeight") or 0) != 0 or not s.get("depleted") \
+                or int(s.get("updatedAt") or 0) == prev["updated_at"]:
+            return
+        log.warning("spool %s zeroed by Bambu, restoring %s g", s["id"], prev["net"])
+        if self.dry:
+            return
+        self.store.save_snap(s)  # the zero stays in the history
+        s.update(self.bambu.put_spool({**s, "netWeight": prev["net"]}))
+        self.store.save_snap(s, "restore")
+        if self.store.alert_due(f"restored:{s['id']}", self.remind):  # Bambu may do it again and again
+            self.tg.send(f"🛟 Bambu обнулил {spool_label(s)} — вернул {prev['net']} г.\n"
+                         f"Если она правда закончилась — убери её из принтера в Handy.")
+            self.store.alert_sent(f"restored:{s['id']}")
 
     # -- spool choice ----------------------------------------------------------------------------------
 

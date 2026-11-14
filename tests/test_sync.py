@@ -117,14 +117,47 @@ class SyncTest(unittest.TestCase):
         s.once()
         self.assertEqual(self.cloud.puts, [(10, 0)])
 
-    def test_spool_zeroed_elsewhere_is_only_recorded(self):
+    def test_zeroed_loaded_spool_is_restored(self):
         spools = [spool(10, 600, True)]
         s = self.make([], spools)
         s.once()
         spools[0].update(netWeight=0, depleted=True, updatedAt=111)
         s.once()
+        self.assertEqual(self.cloud.puts, [(10, 600)])
+        self.assertFalse(spools[0]["depleted"])
+        self.assertIn("вернул 600 г", self.tg.sent[0])
+        self.assertEqual([(r[2], r[6]) for r in self.store.history(10)], [(600, "restore"), (0, "cloud"), (600, "cloud")])
+        spools[0].update(netWeight=0, depleted=True, updatedAt=222)  # Bambu again before the next print
+        s.once()
+        self.assertEqual(self.cloud.puts, [(10, 600), (10, 600)])
+        self.assertEqual(len(self.tg.sent), 1)  # restored again, told once per REMIND_HOURS
+
+    def test_zeroed_spool_then_warning_uses_restored_weight(self):
+        spools = [spool(10, 600, True)]
+        s = self.make([], spools)
+        s.once()
+        spools[0].update(netWeight=0, depleted=True, updatedAt=111)
+        self.cloud._tasks.append(task(1, 4, weight=46))
+        s.once()
+        self.assertFalse(any("Может не хватить" in m for m in self.tg.sent))
+
+    def test_nearly_empty_or_unloaded_spool_zeroed_is_left_alone(self):
+        spools = [spool(10, 40, True), spool(11, 600)]
+        s = self.make([], spools)
+        s.once()
+        spools[0].update(netWeight=0, depleted=True, updatedAt=111)
+        spools[1].update(netWeight=0, depleted=True, updatedAt=111)
+        s.once()
         self.assertEqual(self.cloud.puts, [])
-        self.assertEqual([r[2] for r in self.store.history(10)], [0, 600])
+
+    def test_own_deduction_to_zero_is_not_restored(self):
+        spools = [spool(10, 150, True)]
+        s = self.make([], spools)
+        s.once()
+        self.cloud._tasks.append(task(1, 2, weight=200))
+        s.once()
+        s.once()
+        self.assertEqual(self.cloud.puts, [(10, 0)])
 
     def test_history_records_changes(self):
         spools = [spool(10, 600)]

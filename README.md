@@ -31,7 +31,14 @@ with `print_type: local` / `task_id: 0` ends, only reminds to fix the spool by h
 not covered at all.
 
 The service also keeps every change of every spool it sees (`history`), with the cloud's own
-`updatedAt`, and marks its own writes `deduct` — to tell later who changed a spool.
+`updatedAt`, and marks its own writes `deduct` / `restore` — to tell later who changed a spool.
+
+**Bambu zeroes the loaded spool.** A few minutes before a cloud print, Studio / Handy copy the printer's
+external slot (`vt_tray.remain: 0`, `tray_weight: "0"` — it never knows the rest of a non-RFID spool) into
+Filament Manager: the spool becomes 0 g and `depleted`. When a loaded spool turns 0 g + depleted and the
+service last saw it with at least `LOW_GRAMS`, it writes the last known weight back (every time; the
+message at most every `REMIND_HOURS`). A spool that really ran out is below `LOW_GRAMS` by then, or is taken
+out of the printer in Handy — unloaded spools are never touched.
 
 ### Messages
 
@@ -41,6 +48,7 @@ The service also keeps every change of every spool it sees (`history`), with the
 | print aborted | ⏹ «title» остановлена примерно на 40 % — списал ≈14 г (оценка по времени) |
 | below `LOW_GRAMS` | extra line 🔻 Осталось меньше 100 г. (once per spool until it is refilled) |
 | running, not enough | ⚠️ «title» требует 60 г, а на … осталось 48 г. Может не хватить. |
+| Bambu zeroed the loaded spool | 🛟 Bambu обнулил PLA Lite серая — вернул 840 г. |
 | no / several spools marked in the printer, type mismatch | ❓ … — nothing deducted; retried every pass, reminded every `REMIND_HOURS` |
 | SD card print ended | 🗂 «name» с флешки закончилась — вес не знаю, ничего не списал. Поправь остаток … в Handy. |
 | login expires in `TOKEN_WARN_DAYS` | 🔑 Вход в Bambu истекает через N дн. |
